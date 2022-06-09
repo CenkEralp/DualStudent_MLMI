@@ -133,7 +133,7 @@ def validate(eval_loader, model, log, global_step, epoch):
         meters.update('data_time', time.time() - end)
 
         input_var = torch.autograd.Variable(inputs, volatile=True)
-        target_var = torch.autograd.Variable(target.cuda(non_blocking=True), volatile=True)
+        target_var = torch.autograd.Variable(target.cuda(async=True), volatile=True)
 
         minibatch_size = len(target_var)
         labeled_minibatch_size = target_var.data.ne(NO_LABEL).sum()
@@ -148,7 +148,7 @@ def validate(eval_loader, model, log, global_step, epoch):
         prec = mt_func.accuracy(output1.data, target_var.data, topk=(1, 5))
         prec1, prec5 = prec[0], prec[1]
 
-        meters.update('class_loss', class_loss.data.item(), labeled_minibatch_size)
+        meters.update('class_loss', class_loss.data[0], labeled_minibatch_size)
         meters.update('top1', prec1[0], labeled_minibatch_size)
         meters.update('error1', 100.0 - prec1[0], labeled_minibatch_size)
         meters.update('top5', prec5[0], labeled_minibatch_size)
@@ -208,7 +208,7 @@ def train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch,
         r_input_var = Variable(r_input)
         le_input_var = Variable(r_input, requires_grad=False, volatile=True)
         re_input_var = Variable(l_input, requires_grad=False, volatile=True)
-        target_var = Variable(target.cuda(non_blocking=True))
+        target_var = Variable(target.cuda(async=True))
 
         minibatch_size = len(target_var)
         labeled_minibatch_size = target_var.data.ne(NO_LABEL).sum()
@@ -245,8 +245,8 @@ def train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch,
 
             l_res_loss = args.logit_distance_cost * residual_logit_criterion(l_class_logit, l_cons_logit) / minibatch_size
             r_res_loss = args.logit_distance_cost * residual_logit_criterion(r_class_logit, r_cons_logit) / minibatch_size
-            meters.update('l_res_loss', l_res_loss.data.item())
-            meters.update('r_res_loss', r_res_loss.data.item())
+            meters.update('l_res_loss', l_res_loss.data[0])
+            meters.update('r_res_loss', r_res_loss.data[0])
         else:
             l_class_logit, l_cons_logit = l_logit1, l_logit1
             r_class_logit, r_cons_logit = r_logit1, r_logit1
@@ -261,8 +261,8 @@ def train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch,
         # classification loss
         l_class_loss = class_criterion(l_class_logit, target_var) / minibatch_size
         r_class_loss = class_criterion(r_class_logit, target_var) / minibatch_size
-        meters.update('l_class_loss', l_class_loss.data.item())
-        meters.update('r_class_loss', r_class_loss.data.item())
+        meters.update('l_class_loss', l_class_loss.data[0])
+        meters.update('r_class_loss', r_class_loss.data[0])
 
         l_loss, r_loss = l_class_loss, r_class_loss
         l_loss += l_res_loss
@@ -273,12 +273,12 @@ def train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch,
 
         le_class_logit = Variable(le_class_logit.detach().data, requires_grad=False)
         l_consistency_loss = consistency_weight * consistency_criterion(l_cons_logit, le_class_logit) / minibatch_size
-        meters.update('l_cons_loss', l_consistency_loss.data.item())
+        meters.update('l_cons_loss', l_consistency_loss.data[0])
         l_loss += l_consistency_loss
 
         re_class_logit = Variable(re_class_logit.detach().data, requires_grad=False)
         r_consistency_loss = consistency_weight * consistency_criterion(r_cons_logit, re_class_logit) / minibatch_size
-        meters.update('r_cons_loss', r_consistency_loss.data.item())
+        meters.update('r_cons_loss', r_consistency_loss.data[0])
         r_loss += r_consistency_loss
 
         # stabilization loss
@@ -352,7 +352,7 @@ def train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch,
             for idx in range(unlabeled_minibatch_size, minibatch_size):
                 tar_l_class_logit[idx, ...] = in_r_cons_logit[idx, ...]
             r_stabilization_loss = stabilization_weight * stabilization_criterion(r_cons_logit, tar_l_class_logit) / unlabeled_minibatch_size
-        meters.update('r_stable_loss', r_stabilization_loss.data.item())
+        meters.update('r_stable_loss', r_stabilization_loss.data[0])
         r_loss += r_stabilization_loss
 
         # stabilization loss for l model
@@ -363,16 +363,16 @@ def train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch,
                 tar_r_class_logit[idx, ...] = in_l_cons_logit[idx, ...]
             l_stabilization_loss = stabilization_weight * stabilization_criterion(l_cons_logit, tar_r_class_logit) / unlabeled_minibatch_size
 
-        meters.update('l_stable_loss', l_stabilization_loss.data.item())
+        meters.update('l_stable_loss', l_stabilization_loss.data[0])
         l_loss += l_stabilization_loss
 
-        if np.isnan(l_loss.data.item()) or np.isnan(r_loss.data.item()):
+        if np.isnan(l_loss.data[0]) or np.isnan(r_loss.data[0]):
             LOG.info('Loss value equals to NAN!')
             continue
-        assert not (l_loss.data.item() > 1e5), 'L-Loss explosion: {}'.format(l_loss.data.item())
-        assert not (r_loss.data.item() > 1e5), 'R-Loss explosion: {}'.format(r_loss.data.item())
-        meters.update('l_loss', l_loss.data.item())
-        meters.update('r_loss', r_loss.data.item())
+        assert not (l_loss.data[0] > 1e5), 'L-Loss explosion: {}'.format(l_loss.data[0])
+        assert not (r_loss.data[0] > 1e5), 'R-Loss explosion: {}'.format(r_loss.data[0])
+        meters.update('l_loss', l_loss.data[0])
+        meters.update('r_loss', r_loss.data[0])
 
         # calculate prec and error
         l_prec = mt_func.accuracy(l_class_logit.data, target_var.data, topk=(1, ))[0]
